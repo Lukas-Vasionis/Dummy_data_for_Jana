@@ -56,28 +56,27 @@ def equalize_list_length(col1, col2):
     return col1, col2
 
 
-def get_day_n_transaction_df(days, raw_probabilities, max_value_coef):
-    transaction_list = []
-    while len(transaction_list) < 99000:
-        weekly_sample_size = random.randint(50, 150)
-        transaction_list = transaction_list + get_transaction_list(weekly_sample_size, max_value_coef)
+def get_day_n_transaction_df(days, raw_probabilities, max_value_coef, week_count, total_sample_size):
+    avg_weekly_sample_size=total_sample_size/week_count
+    min_rand_smp_size=round(avg_weekly_sample_size*0.5,0)
+    max_rand_smp_size = round(avg_weekly_sample_size * 1.5,0)
 
-    week_day_list = []
-    while len(week_day_list) < 10000:
-        weekly_sample_size = random.randint(50, 150)
-        probabilities = tweak_probabilities(raw_probabilities)
-        frequencies = get_frequencies(weekly_sample_size, probabilities)
+    weekly_sample_size=random.randint(min_rand_smp_size, max_rand_smp_size)
 
-        week_day_list = week_day_list + get_week_day_list(days, frequencies)
+    transaction_list = get_transaction_list(weekly_sample_size, max_value_coef)
 
+    probabilities = tweak_probabilities(raw_probabilities)
+    frequencies = get_frequencies(weekly_sample_size, probabilities)
+    week_day_list = get_week_day_list(days, frequencies)
+    transaction_list, week_day_list = equalize_list_length(transaction_list, week_day_list)
 
-    week_day_list, transaction_list = equalize_list_length(week_day_list, transaction_list)
     df = pd.DataFrame({'week_day': week_day_list, 'transactions_eur': transaction_list})
     return df
 
 
 def get_date_df():
     df_date = pd.DataFrame({'date': pd.date_range(start="2022-02-24", end="2022-09-21")})
+    df_date['week'] = df_date['date'].dt.isocalendar().week
     df_date['week_day'] = df_date['date'].dt.weekday + 1
     return df_date
 
@@ -89,21 +88,36 @@ fond_1k = ['1K', 1000, 100]
 df_all_fonds = pd.DataFrame(columns=['date', 'transactions_eur', 'fondas'])
 for fond in [fond_1k, fond_ltv, fond_BnY]:
     fond_name = fond[0]
-    sample_size = fond[1]
+    fund_total_sample_size = fond[1]
     max_value_coef = fond[2]
 
-    df_days_n_trans = get_day_n_transaction_df(days=days,
-                                               raw_probabilities=raw_probabilities,
-                                               max_value_coef=max_value_coef)
+    weeks = get_date_df()['week'].tolist()
+    df_week = get_date_df()
+    df_fond = get_date_df().iloc[0:0]
 
-    df_date = get_date_df()
+    for week in weeks:
+        df_fond_week = df_week.loc[df_week['week']==week,:]
 
-    df_fond = df_date.merge(df_days_n_trans, on='week_day', how='right').drop('week_day', axis=1)
+        df_days_n_trans = get_day_n_transaction_df(days=days,
+                                                   raw_probabilities=raw_probabilities,
+                                                   max_value_coef=max_value_coef,
+                                                   week_count=len(weeks), total_sample_size=fund_total_sample_size)
+
+        df_fond_week = df_fond_week.merge(df_days_n_trans, on='week_day', how='right').drop('week_day', axis=1)
+        df_fond=pd.concat([df_fond, df_fond_week])
+
     df_fond['fondas'] = fond_name
+    df_fond=df_fond.loc[df_fond['date'].notna()]
     df_fond.to_csv(f'outputs/{fond_name}.tsv', sep='\t', index=False)
 
+
     df_all_fonds = pd.concat([df_fond, df_all_fonds])
-    plt.hist(df_fond['date'], bins=100)
+    plt.hist(df_fond['date'], bins=len(weeks))
+    plt.savefig(f"outputs/graphs/{fond_name}_transacton_count-per_week.png")
+    plt.show()
+
+    plt.hist(df_fond['transactions_eur'], bins=100)
+    plt.savefig(f"outputs/graphs/{fond_name}_transacton_count-by_size.png")
     plt.show()
 
 df_all_fonds.to_csv(f'outputs/UKR_fonds.tsv', sep='\t', index=False)
